@@ -1,0 +1,75 @@
+# 统一行尾符与文本编码，避免 Windows/macOS/Linux 协作时产生无意义 diff。
+#
+# 为什么需要这个文件：
+#   本项目在 Windows 上开发，Python 源码用 CRLF 保存。
+#   如果不声明，Git 会把整个仓库当成"每行都改了"，
+#   导致 diff 不可读、合并冲突频发。
+#
+# 规则：
+#   - 文本文件统一在仓库内用 LF 存储，检出时由 Git 按平台自动转换
+#   - Windows 批处理脚本必须保留 CRLF，否则无法执行
+#   - 二进制文件禁止任何转换（否则 PDF/DOCX 会损坏）
+
+# 默认：自动检测文本文件，仓库内用 LF
+* text=auto eol=lf
+
+# ---------------------------------------------------------------------------
+# 源码与配置：强制 LF
+# ---------------------------------------------------------------------------
+*.py       text eol=lf
+*.pyi      text eol=lf
+*.md       text eol=lf
+*.txt      text eol=lf
+*.json     text eol=lf
+*.toml     text eol=lf
+*.ini      text eol=lf
+*.cfg      text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.html     text eol=lf
+*.css      text eol=lf
+*.js       text eol=lf
+*.mjs      text eol=lf
+*.sql      text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# ---------------------------------------------------------------------------
+# Windows 脚本：必须 CRLF
+# ---------------------------------------------------------------------------
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+*.ps1      text eol=crlf
+
+# ---------------------------------------------------------------------------
+# Shell 脚本：必须 LF（CRLF 会导致 "bad interpreter" 错误）
+# ---------------------------------------------------------------------------
+*.sh       text eol=lf
+
+# ---------------------------------------------------------------------------
+# 二进制文件：禁止转换
+# ---------------------------------------------------------------------------
+*.pdf      binary
+*.docx     binary
+*.doc      binary
+*.xlsx     binary
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.bmp      binary
+*.tif      binary
+*.tiff     binary
+*.ico      binary
+*.onnx     binary
+*.db       binary
+*.sqlite   binary
+*.zip      binary
+*.gz       binary
+*.whl      binary
+
+# ---------------------------------------------------------------------------
+# 语言统计：把文档与示例数据从 GitHub 语言占比中排除
+# ---------------------------------------------------------------------------
+docs/**      linguist-documentation
+samples/**   linguist-vendored

@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{# 待办列表页：对应需求 2.4.7「待办调用模块」。
+
+   设计说明：
+   - 顶部引导区默认展开（无任务时），让第一次进来的人知道从哪开始；
+   - 统计卡片给每个数字配一条"提示语"，避免只有数字不知含义；
+   - 表格里状态与阻塞原因做了视觉分层：正常状态只显示标签，
+     阻塞任务额外用一行小字露出原因，便于快速扫出问题行。 #}
+
+{% block title %}待办列表 · 合同审批审查系统{% endblock %}
+
+{% block content %}
+
+{# 新手引导：首次进入（无任务）时默认展开，之后可收起。 #}
+<details class="guide" {% if not tasks %}open{% endif %}>
+  <summary>
+    使用指引
+    <span class="hint">本系统只做「读合同 → 挑毛病 → 把意见写回审批系统」，不替人做通过/驳回决定</span>
+  </summary>
+  <ol class="guide-steps">
+    <li>
+      <strong>拉取</strong>　点下方「拉取待处理审批单」，把审批系统里等你审的合同拿过来。
+      重复点不会建重复任务（按审批编号去重）。
+    </li>
+    <li>
+      <strong>处理</strong>　在列表里点某份合同的「查看详情」，进去后点「一键处理」。
+      系统会自动下载文件 → 读文档（扫描件约 5—7 秒）→ 跑 26 条规则 → 生成意见 → 写回评论区。
+    </li>
+    <li>
+      <strong>核对</strong>　详情页从上往下依次是：审批与附件 → 解析结果（读到了什么）→
+      规则命中（挑出什么问题，带原文证据）→ 结果与回写（最终意见）。
+    </li>
+    <li>
+      <strong>遇到「已阻塞」</strong>　说明有技术问题卡住了，点进去看阻塞原因。
+      附件缺失 / 文件为空 / 无法识别 → 让对方补文件，再点「重试阻塞任务」→「重新处理」。
+    </li>
+  </ol>
+</details>
+
+<div class="cards">
+  <div class="card">
+    <div class="num">{{ stats.total }}</div>
+    <div class="lbl">任务总数</div>
+  </div>
+  <div class="card">
+    <div class="num">{{ stats.pending }}</div>
+    <div class="lbl">待解析</div>
+  </div>
+  <div class="card">
+    <div class="num">{{ stats.blocked }}</div>
+    <div class="lbl">已阻塞</div>
+  </div>
+  <div class="card">
+    <div class="num">{{ stats.done }}</div>
+    <div class="lbl">已完成</div>
+  </div>
+</div>
+
+<section class="panel">
+  <h2>
+    待办拉取
+    <span class="hint">按审批编号去重，重复拉取只更新不新建</span>
+  </h2>
+  <form class="inline" method="post" action="/actions/pull">
+    <label class="small muted" style="margin-right:6px">拉取条数</label>
+    <input type="number" name="limit" value="20" min="1" max="200" style="width:76px">
+    <button type="submit" style="margin-left:8px">拉取待处理审批单</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>
+    待处理审批单
+    <span class="hint">共 {{ tasks|length }} 条</span>
+  </h2>
+  {% if tasks %}
+  <table>
+    <thead>
+      <tr>
+        <th>审批编号</th>
+        <th>合同标题</th>
+        <th>申请人</th>
+        <th class="nowrap">申请时间</th>
+        <th class="nowrap">附件</th>
+        <th>任务状态</th>
+        <th>回写状态</th>
+        <th class="nowrap"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for task in tasks %}
+      <tr>
+        <td class="mono nowrap">{{ task.approval_code }}</td>
+        <td>
+          {{ task.approval_title }}
+          {# 阻塞原因不单开一列，而是挂在标题下方：
+             这样一眼扫下来能立刻发现"这一行有问题"，不必横向找列。
+             正常任务不显示，避免表格被无关信息撑宽。 #}
+          {% if task.blocked_reason %}
+          <div class="small" style="margin-top:3px">
+            <span class="badge state-blocked">阻塞</span>
+            <span class="mono" style="color:var(--ink-muted)">{{ task.blocked_reason }}</span>
+          </div>
+          {% endif %}
+        </td>
+        <td>{{ task.applicant_name }}</td>
+        <td class="small muted nowrap">{{ task.applied_at or '—' }}</td>
+        <td>{{ task.attachment_count }}</td>
+        <td>
+          <span class="badge state-{{ task.task_status }}">
+            {{ task.task_status | display_name }}
+          </span>
+        </td>
+        <td>
+          <span class="badge {{ 'ok' if task.write_status == 'success' else ('fail' if task.write_status == 'failed' else 'state-pending') }}">
+            {{ task.write_status | display_name }}
+          </span>
+        </td>
+        <td class="nowrap">
+          <a class="btn" href="/approvals/{{ task.approval_code }}">查看详情</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted" style="margin:0">
+    暂无任务。点击上方「拉取待处理审批单」从审批系统拉取。
+  </p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>
+    最近运行日志
+    <span class="hint">按时间倒序，最多显示 8 条 · 完整日志见顶栏「运行日志」</span>
+  </h2>
+  {% if recent_logs %}
+    {# 限制可视高度：这是待办页，日志是辅助信息，不该占掉半屏。
+       内容本身不截断（靠内部滚动查看），避免"看不到就以为没有"。 #}
+    <div class="log-scroll">
+      {% for log in recent_logs[:8] %}
+      <div class="log-line">
+        <span class="t">{{ log.created_at }}</span>
+        <span class="mono">[{{ log.log_type }}]</span>
+        {% if log.log_level == 'error' %}
+        <span class="badge risk-high" style="margin-right:4px">error</span>
+        {% elif log.log_level == 'warning' %}
+        <span class="badge risk-medium" style="margin-right:4px">warning</span>
+        {% else %}
+        <span class="mono muted">[info]</span>
+        {% endif %}
+        {{ log.log_content }}
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="muted" style="margin:0">暂无日志。</p>
+  {% endif %}
+</section>
+{% endblock %}

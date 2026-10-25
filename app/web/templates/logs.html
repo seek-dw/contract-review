@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{# 运行日志页：全局视角，最近 300 条。
+
+   设计说明：
+   - 顶部给出各阶段的含义，否则看到 [pull]/[parse] 这类标签不知道该关注什么；
+   - 日志行时间戳定宽，使类型与级别标签竖直对齐，便于扫读；
+   - error 级别的行用朱砂色标出，在长列表里能一眼找到。 #}
+
+{% block title %}运行日志 · 合同审批审查系统{% endblock %}
+
+{% block content %}
+
+<section class="panel">
+  <h2>
+    日志标签含义
+    <span class="hint">每行格式：时间 [阶段] [级别] 内容</span>
+  </h2>
+  <dl class="kv">
+    <dt>阶段</dt>
+    <dd class="small">
+      <span class="mono">pull</span> 拉取　
+      <span class="mono">download</span> 下载　
+      <span class="mono">parse</span> 解析　
+      <span class="mono">review</span> 审查　
+      <span class="mono">result</span> 结果　
+      <span class="mono">comment</span> 回写　
+      <span class="mono">retry</span> 重试
+    </dd>
+    <dt>级别</dt>
+    <dd class="small">
+      <span class="badge state-reviewing">info</span> 正常　
+      <span class="badge risk-medium">warning</span> 需留意　
+      <span class="badge risk-high">error</span> 出错
+    </dd>
+  </dl>
+</section>
+
+<section class="panel">
+  <h2>
+    运行日志
+    <span class="hint">最近 300 条 · 按时间倒序</span>
+  </h2>
+  {% if logs %}
+    {% for log in logs %}
+    <div class="log-line">
+      <span class="t">{{ log.created_at }}</span>
+      <span class="mono">[{{ log.log_type }}]</span>
+      {% if log.log_level == 'error' %}
+      <span class="badge risk-high" style="margin-right:4px">error</span>
+      {% elif log.log_level == 'warning' %}
+      <span class="badge risk-medium" style="margin-right:4px">warning</span>
+      {% else %}
+      <span class="mono muted">[info]</span>
+      {% endif %}
+      {% if log.task_id %}
+      <span class="muted small mono">task={{ log.task_id }}</span>
+      {% endif %}
+      {{ log.log_content }}
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted" style="margin:0">暂无日志。</p>
+  {% endif %}
+</section>
+{% endblock %}

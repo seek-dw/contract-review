@@ -1,0 +1,830 @@
+/* ============================================================================
+   合同审批审查系统 —— 调用端样式
+   ============================================================================
+
+   设计方向：「法律文书 / 编辑排版」
+
+   为什么是这个方向（不是普通的后台管理界面）：
+     这个系统的产物是一份给法务看的**审查意见书**。用户是律师、法务、审批人，
+     他们日常面对的是纸质合同、条款编号、批注。所以界面不该像 SaaS 后台
+     （蓝白卡片 + 圆角按钮 + 图标），而应该像一份排版精良的法律文书：
+       - 衬线字体承载正文，模拟印刷合同的质感；
+       - 深墨色作为主色，朱砂红作为"批注/风险"色（对应纸质校对的朱笔）；
+       - 通过细线、留白、字距建立秩序感，而不是靠阴影和圆角堆立体感；
+       - 数字用等宽字体，让金额、SHA256、编号对齐可读。
+
+   具体取舍：
+     - 字体：正文 Noto Serif SC（思源宋体，本机已有），
+       界面元素（标签/按钮）用系统无衬线保证小字清晰，
+       数字/代码用 ui-monospace 保证对齐。**不引入任何网络字体**——
+       离线环境也要正常显示，且避免首屏闪烁。
+     - 配色：纸白 #faf9f6 而非纯白（模拟纸张），
+       墨黑 #1a1a1a 而非纯黑（减少刺眼），
+       朱砂 #a83a2c 作为风险色（中国传统批注色，比鲜红更沉稳）。
+     - 动效：极克制。只有页面载入的一次淡入上浮、以及 hover 的细线变化。
+       法律文书界面不该有弹跳和缩放，那是消费级产品的语言。
+     - 装饰：用 CSS 在页面上叠加极淡的纸张噪点纹理（SVG feTurbulence），
+       以及标题下的细双线（模拟文书表头）。不引外部图片。
+
+   可维护性说明：
+     全部使用 CSS 自定义属性（:root 下的 --ink / --paper 等），
+     换主题只改一处。模板中使用的类名保持不变，本文件是纯样式替换，
+     不需要改动任何 HTML。
+   ============================================================================ */
+
+/* ---------------------------------------------------------------------------
+   设计令牌
+   --------------------------------------------------------------------------- */
+:root {
+  /* 纸张与墨色 */
+  --paper: #faf9f6;           /* 页面底色：略带暖调的纸白，比纯白柔和 */
+  --paper-raised: #ffffff;    /* 卡片/浮层：纯白，与纸底形成层次 */
+  --paper-sunk: #f2f0ea;      /* 凹陷区（表头、代码块底） */
+  --ink: #1a1a1a;             /* 主文字：墨黑 */
+  --ink-soft: #3d3a35;        /* 次级文字 */
+  --ink-muted: #7a736a;       /* 辅助说明：灰褐，比纯灰更贴合纸感 */
+  --ink-faint: #a8a29a;       /* 极弱信息（占位、分隔） */
+
+  /* 线条 */
+  --rule: #ddd8cf;            /* 常规分隔线 */
+  --rule-strong: #c8c1b4;     /* 强调分隔线 */
+  --rule-hair: #eae6de;       /* 极细线（表格内行分隔） */
+
+  /* 强调色：朱砂。用于风险、当前选中、关键动作 */
+  --vermilion: #a83a2c;
+  --vermilion-soft: #c25a48;
+  --vermilion-wash: #f7ece9;  /* 朱砂的淡底 */
+
+  /* 语义色（风险等级）。刻意压低饱和度，避免像仪表盘报警灯 */
+  --risk-high: #a83a2c;
+  --risk-high-wash: #f7ece9;
+  --risk-medium: #8a6420;
+  --risk-medium-wash: #f8f2e4;
+  --risk-low: #3f6b4a;
+  --risk-low-wash: #edf3ee;
+
+  /* 状态色 */
+  --state-blocked: #6b4a7a;
+  --state-blocked-wash: #f2edf6;
+  --state-active: #2f5d7c;
+  --state-active-wash: #ebf1f6;
+  --state-idle: #7a736a;
+  --state-idle-wash: #f0eee8;
+
+  /* 字体 */
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif;
+  --font-sans: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+
+  /* 间距节奏：全部基于 4px 栅格，保证任意组合都对齐。
+     实际取值比常规后台系统更大——这是刻意的：
+     法律文书的可读性优先级最高，拥挤的表格会让人误读行与行的关系。
+     实测调整前（gap-5=24 / 行内边距 8px）整体过扁，故整体上调一档。 */
+  --gap-1: 4px;
+  --gap-2: 10px;
+  --gap-3: 14px;
+  --gap-4: 20px;
+  --gap-5: 30px;
+  --gap-6: 40px;
+  --gap-7: 60px;
+
+  /* 版心宽度。1180px 是"能放下 9 列表格"与"阅读舒适行宽"的平衡点。
+     比常规 1200+ 略窄，让文字行宽不超过舒适阅读区。 */
+  --measure: 1180px;
+}
+
+/* ---------------------------------------------------------------------------
+   基础重置
+   --------------------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+/* 纸张噪点层：用 SVG 湍流生成极淡纹理，营造纸感。
+   固定定位 + 不参与指针事件，因此不影响任何交互。
+   为什么用内联 SVG 而不是图片：零额外请求，且可随主题调整透明度。 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-serif);
+  /* 15.5px / 1.85：比常规后台（14px/1.5）明显更松。
+     宋体在小字号下笔画细，需要更大字号和行距才立得住；
+     合同条款是逐字读的文本，不是扫一眼的仪表盘数字。 */
+  font-size: 15.5px;
+  line-height: 1.85;
+  /* 正文字距略微收紧：宋体在小字号下字面偏散，收紧后更成型 */
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 所有正文容器置于噪点层之上 */
+body > * { position: relative; z-index: 1; }
+
+/* ---------------------------------------------------------------------------
+   顶栏：文书表头
+   --------------------------------------------------------------------------- */
+header.topbar {
+  background: var(--ink);
+  color: #f0ece5;
+  padding: 0 var(--gap-5);
+  display: flex;
+  align-items: center;
+  gap: var(--gap-5);
+  height: 58px;
+  /* 底部一道朱砂细线：像文书的装订线，也是唯一一处饱和色点缀 */
+  border-bottom: 2px solid var(--vermilion);
+}
+
+/* 标题：加宽字距 + 小字号大写感，模拟公文书眉 */
+header.topbar h1 {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+
+/* 品牌印记：仿朱砂方章的方形色块 + 单字。
+   为什么不用图标/Logo 图片：
+   1) 零额外请求，离线可用；
+   2) 中文单字本身就是最好的标识，辨识度高于抽象图标；
+   3) 方章形态与整体「文书」语言一致，圆角 Logo 会破坏调性。 */
+header.topbar .brand-seal {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--vermilion);
+  color: #fff;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  /* 方角 + 极细内描边，模拟印章的边框 */
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  user-select: none;
+}
+
+header.topbar nav {
+  display: flex;
+  gap: var(--gap-4);
+  margin-left: var(--gap-3);
+}
+
+header.topbar nav a {
+  color: #b8b2a8;
+  text-decoration: none;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  padding: 4px 0;
+  position: relative;
+  transition: color 0.18s ease;
+}
+
+/* 链接下划线用 ::after 做"从左侧展开"的细线，比直接下划线精致 */
+header.topbar nav a::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 0;
+  height: 1px;
+  background: var(--vermilion-soft);
+  transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+header.topbar nav a:hover { color: #fff; }
+header.topbar nav a:hover::after { width: 100%; }
+
+header.topbar .meta {
+  margin-left: auto;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  color: #8a8479;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   版心
+   --------------------------------------------------------------------------- */
+main {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: var(--gap-5) var(--gap-5) var(--gap-7);
+}
+
+/* 页面载入的一次轻微上浮。
+   【重要】这里**不使用 opacity 动画**，只做 transform 位移。
+   原因（两次踩坑后才定下来的）：
+     1) 最初用 `both` + delay → 动画开始前元素 opacity:0，headless 截图整页空白；
+     2) 去掉 fill-mode 后仍用 opacity 渐变 → 若浏览器标签在后台不触发动画，
+        或用户开了"减少动效"但系统实现不完整，内容会长时间处于半透明，
+        看起来像"页面没加载完"。
+   opacity 是有风险的动画属性：它的中间态直接等同于"内容不可见"。
+   改用纯位移：位移的中间态只是"位置偏了一点"，内容始终 100% 可见。
+   视觉效果依旧成立（内容落定感），但不会出现"看不见"的极端情况。 */
+@keyframes page-enter {
+  from { transform: translateY(6px); }
+  to   { transform: translateY(0); }
+}
+
+main > * {
+  animation: page-enter 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* 逐块错开，形成"文书逐页翻开"的节奏。
+   延迟总和控制在 0.16s 内：超过这个时长，慢设备上会明显感到"内容一块块跳出"，
+   反而不如一次性出现干脆。 */
+main > *:nth-child(1) { animation-delay: 0.02s; }
+main > *:nth-child(2) { animation-delay: 0.05s; }
+main > *:nth-child(3) { animation-delay: 0.08s; }
+main > *:nth-child(4) { animation-delay: 0.11s; }
+main > *:nth-child(5) { animation-delay: 0.14s; }
+main > *:nth-child(n+6) { animation-delay: 0.16s; }
+
+/* 打印时彻底关掉动效：打印渲染不执行动画。 */
+@media print {
+  main > * { animation: none !important; transform: none !important; }
+  body::before { display: none !important; }   /* 噪点纹理不打印 */
+  header.topbar { background: #fff !important; color: #000 !important; }
+}
+
+/* ---------------------------------------------------------------------------
+   文书头（详情页专用）
+   --------------------------------------------------------------------------- */
+/* 详情页顶部的"合同审查意见书"+ 审批编号。
+   作用有两个：一是有仪式感（这是要交给法务看的意见书），
+   二是让人始终知道自己在看哪份合同，不必回头看顶栏。 */
+.doc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap-4);
+  padding: var(--gap-3) 0 var(--gap-3);
+  margin-bottom: var(--gap-3);
+  /* 上下双线：上粗下细，模拟公文表头的"双线分隔" */
+  border-top: 2px solid var(--ink);
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.doc-head-label {
+  font-family: var(--font-serif);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: var(--ink);
+  /* 字距拉开 + 全中文，做出"标题字"的庄重感 */
+}
+
+.doc-head-code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-muted);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+@media (max-width: 820px) {
+  .doc-head { flex-direction: column; gap: var(--gap-1); }
+  .doc-head-label { font-size: 16px; letter-spacing: 0.14em; }
+}
+
+/* ---------------------------------------------------------------------------
+   面板：文书章节
+   --------------------------------------------------------------------------- */
+section.panel {
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  /* 只上边框加粗，形成"章节起始"的视觉锚点，比四周等宽更有层次 */
+  border-top: 2px solid var(--ink);
+  padding: var(--gap-5) var(--gap-5) var(--gap-4);
+  margin-bottom: var(--gap-5);
+}
+
+/* 章节标题：中文序号 + 名称 + 说明。
+   序号（壹/贰/叁…）由模板写入，这里负责它的视觉处理：
+   用衬线体、略大的字号、朱砂色，做成"文书章节号"的样子。 */
+section.panel > h2 {
+  font-family: var(--font-serif);
+  font-size: 15.5px;
+  font-weight: 600;
+  margin: 0 0 var(--gap-4);
+  padding-bottom: var(--gap-3);
+  border-bottom: 1px solid var(--rule-strong);
+  letter-spacing: 0.06em;
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-2);
+  flex-wrap: wrap;
+  /* 标题与说明在同一行时，说明靠右对齐，形成"章节名 ······ 注释"的文书感 */
+  position: relative;
+}
+
+/* 标题左侧的朱砂竖条：最小面积的高饱和色，用来定位视线 */
+section.panel > h2::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 14px;
+  background: var(--vermilion);
+  /* 与文字基线对齐，避免看起来浮起来 */
+  transform: translateY(1px);
+  flex: 0 0 auto;
+}
+
+section.panel > h2 .hint {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  color: var(--ink-muted);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  line-height: 1.7;
+  /* 说明文字不抢标题的视觉重量 */
+  margin-left: 0;
+  /* 说明若过长则独占一行，不挤压标题 */
+  flex: 1 1 auto;
+}
+
+/* 子标题（如"表单数据""基础信息"）：比章节标题轻一档，
+   用左侧短线代替完整下边框，避免一个面板里出现多条横线 */
+/* 子标题（如"表单数据""基础信息"）：比章节标题轻一档。
+   刻意不加任何 before 装饰——
+   章节标题的朱砂竖条是"章节锚点"，一个面板内只需要一个；
+   给子标题也加会让一个面板里出现 4-5 个色块，反而噪杂。
+   改用「字号降一档 + 字色变浅 + 上方留白加大」来建立层次。 */
+section.panel > h2.sub {
+  font-size: 14px;
+  border-bottom: none;
+  padding-bottom: 0;
+  margin: var(--gap-5) 0 var(--gap-3);
+  color: var(--ink-soft);
+  letter-spacing: 0.08em;
+}
+section.panel > h2.sub::before {
+  content: none;   /* 覆盖父规则的朱砂竖条 */
+}
+
+/* ---------------------------------------------------------------------------
+   表格
+   --------------------------------------------------------------------------- */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  /* 表格文字用无衬线：单元格信息密度高，宋体小字易糊 */
+}
+
+/* 单元格内边距：纵向 12px 是"行与行能分开"的下限。
+   实测调整前用 10px，多列表格的行界模糊，容易串行读错。 */
+th, td {
+  text-align: left;
+  padding: var(--gap-3) var(--gap-4);
+  border-bottom: 1px solid var(--rule-hair);
+  vertical-align: top;
+  line-height: 1.7;
+}
+
+th {
+  background: var(--paper-sunk);
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  /* 表头上边线加重，与数据行明确分层 */
+  border-top: 1px solid var(--rule-strong);
+  border-bottom: 1px solid var(--rule-strong);
+  padding-top: var(--gap-3);
+  padding-bottom: var(--gap-3);
+}
+
+/* 行悬停：极淡的暖色，不用蓝（蓝色是 SaaS 语言，这里要纸感） */
+tbody tr { transition: background-color 0.14s ease; }
+tbody tr:hover td { background: #fbf9f4; }
+
+/* 表格最后一行不留底线，避免与面板下边框形成双线 */
+tbody tr:last-child td { border-bottom: none; }
+
+/* ---------------------------------------------------------------------------
+   徽标：风险等级与状态
+   --------------------------------------------------------------------------- */
+.badge {
+  display: inline-block;
+  padding: 1px 9px;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.85;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  /* 方角而非圆角：文书不用胶囊形，方角更像印章/标签 */
+  border: 1px solid transparent;
+}
+
+.badge.risk-high   { color: var(--risk-high);   background: var(--risk-high-wash);   border-color: #e8c9c3; }
+.badge.risk-medium { color: var(--risk-medium); background: var(--risk-medium-wash); border-color: #e3d5b4; }
+.badge.risk-low    { color: var(--risk-low);    background: var(--risk-low-wash);    border-color: #c8ddcd; }
+
+.badge.state-blocked   { color: var(--state-blocked); background: var(--state-blocked-wash); border-color: #ddd0e6; }
+.badge.state-done      { color: var(--risk-low);      background: var(--risk-low-wash);      border-color: #c8ddcd; }
+.badge.state-pending   { color: var(--state-idle);    background: var(--state-idle-wash);    border-color: #e0ddd5; }
+.badge.state-parsing,
+.badge.state-reviewing { color: var(--state-active);  background: var(--state-active-wash);  border-color: #c6d8e5; }
+
+.badge.ok   { color: var(--risk-low);   background: var(--risk-low-wash);   border-color: #c8ddcd; }
+.badge.fail { color: var(--risk-high);  background: var(--risk-high-wash);  border-color: #e8c9c3; }
+
+/* ---------------------------------------------------------------------------
+   按钮
+   --------------------------------------------------------------------------- */
+button, .btn {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 7px 18px;
+  /* 方角 + 无阴影：印刷品的语言 */
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+  transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+button:hover, .btn:hover {
+  background: var(--vermilion);
+  border-color: var(--vermilion);
+  color: #fff;
+}
+
+/* 次要按钮：描边式，与主按钮形成主次 */
+button.secondary {
+  background: transparent;
+  color: var(--ink-soft);
+  border-color: var(--rule-strong);
+}
+button.secondary:hover {
+  background: transparent;
+  color: var(--vermilion);
+  border-color: var(--vermilion);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--ink-muted);
+  border-color: var(--rule);
+}
+button:disabled:hover {
+  background: transparent;
+  color: var(--ink-muted);
+  border-color: var(--rule);
+}
+
+/* 表格内的按钮：缩小尺寸。
+   原因：默认按钮 padding 是为独立操作区设计的，放进表格会把行高撑大，
+   导致"有按钮的行"比"没按钮的行"高一截，整张表看起来参差不齐。
+   这里单独收紧，让行高由文字决定而不是由按钮决定。 */
+td .btn, td button {
+  padding: 4px 12px;
+  font-size: 12px;
+  /* 表格里的按钮不该抢视觉焦点，用描边式更克制 */
+  background: transparent;
+  color: var(--ink-soft);
+  border-color: var(--rule-strong);
+}
+td .btn:hover, td button:hover {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+/* 键盘可达性：文书界面常被键盘操作，必须有清晰焦点环 */
+button:focus-visible, .btn:focus-visible,
+header.topbar nav a:focus-visible {
+  outline: 2px solid var(--vermilion);
+  outline-offset: 2px;
+}
+
+form.inline { display: inline; }
+
+/* 表单控件 */
+input[type="number"], input[type="text"] {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--rule-strong);
+  background: var(--paper-raised);
+  color: var(--ink);
+}
+input[type="number"]:focus, input[type="text"]:focus {
+  outline: none;
+  border-color: var(--vermilion);
+}
+
+/* ---------------------------------------------------------------------------
+   提示条（操作反馈）
+   --------------------------------------------------------------------------- */
+.notice {
+  padding: var(--gap-2) var(--gap-4);
+  margin-bottom: var(--gap-4);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  border: 1px solid;
+  /* 左侧粗边：模拟文书里的旁注标记 */
+  border-left-width: 3px;
+  line-height: 1.7;
+}
+
+.notice.ok   { background: var(--risk-low-wash);   border-color: #c8ddcd; border-left-color: var(--risk-low);   color: #2f5340; }
+.notice.err  { background: var(--risk-high-wash);  border-color: #e8c9c3; border-left-color: var(--risk-high);  color: #87301f; }
+.notice.info { background: var(--state-active-wash); border-color: #c6d8e5; border-left-color: var(--state-active); color: #24485f; }
+
+/* ---------------------------------------------------------------------------
+   代码 / 原文片段 / 审查意见正文
+   --------------------------------------------------------------------------- */
+pre.snippet {
+  margin: var(--gap-1) 0 0;
+  padding: var(--gap-2) var(--gap-3);
+  background: var(--paper-sunk);
+  /* 引用块用左侧细线而非四周边框，更轻 */
+  border-left: 2px solid var(--rule-strong);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink-soft);
+  max-height: 200px;
+  overflow: auto;
+}
+
+pre.comment {
+  margin: 0;
+  padding: var(--gap-4) var(--gap-5);
+  background: #fdfcf9;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--vermilion);
+  font-family: var(--font-serif);
+  font-size: 13.5px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  max-height: 460px;
+  overflow: auto;
+  color: var(--ink);
+}
+
+/* 滚动条也做纸感处理，避免出现系统默认灰条破坏整体 */
+pre.snippet::-webkit-scrollbar,
+pre.comment::-webkit-scrollbar { width: 8px; height: 8px; }
+pre.snippet::-webkit-scrollbar-thumb,
+pre.comment::-webkit-scrollbar-thumb { background: var(--rule-strong); }
+pre.snippet::-webkit-scrollbar-track,
+pre.comment::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------------------------------------------------------------------------
+   键值列表（dl.kv）
+   --------------------------------------------------------------------------- */
+.kv {
+  display: grid;
+  /* 标签列定宽 128px：中文标签最长约 7 字，128px 刚好不换行 */
+  grid-template-columns: 128px 1fr;
+  gap: var(--gap-1) var(--gap-4);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  align-items: baseline;
+}
+
+.kv dt {
+  color: var(--ink-muted);
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+  /* 标签右对齐至分隔线，形成整齐的长短格 */
+  text-align: right;
+  padding-top: 1px;
+  border-right: 1px solid var(--rule-hair);
+  padding-right: var(--gap-3);
+}
+
+.kv dd {
+  margin: 0;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+/* ---------------------------------------------------------------------------
+   统计卡片
+   --------------------------------------------------------------------------- */
+.cards {
+  display: grid;
+  /* 自动适应列数，窄屏自动换行，不用媒体查询 */
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--gap-3);
+  margin-bottom: var(--gap-5);
+}
+
+.card {
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-top: 2px solid var(--rule-strong);
+  /* 上下不对称的内边距：上方留白多于下方，
+     让数字在视觉上"坐"在卡片中上部，而不是正中央呆板地悬着。 */
+  padding: var(--gap-4) var(--gap-4) var(--gap-3);
+  position: relative;
+  transition: border-top-color 0.2s ease;
+}
+
+/* 悬停时顶部线变朱砂：极小的反馈，但让人感到卡片"活"的 */
+.card:hover { border-top-color: var(--vermilion); }
+
+/* 数字：这是卡片的视觉主体，必须给足呼吸。
+   实测问题：数字与标签间距过小，四张卡片连排时看起来像一团。
+   现在用 40px 字号 + 独立行高 + 明确下边距，让数字单独成层。 */
+.card .num {
+  font-family: var(--font-serif);
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.1;
+  /* 数字用等宽特性对齐（tabular-nums），避免 1 和 8 宽度不一 */
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  display: block;
+  margin: 0 0 var(--gap-1) 0;
+}
+
+/* 标签与数字之间加一道极短横线，既是装饰也强化层次 */
+.card .lbl {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  letter-spacing: 0.12em;
+  margin: 0;
+  padding-top: var(--gap-1);
+  display: block;
+  border-top: 1px solid var(--rule-hair);
+}
+
+/* ---------------------------------------------------------------------------
+   日志行
+   --------------------------------------------------------------------------- */
+.log-line {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.95;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--rule-hair);
+  color: var(--ink-soft);
+  /* 长日志自动换行且缩进对齐，避免第二行顶到最左破坏阅读 */
+  word-break: break-word;
+}
+
+.log-line:last-child { border-bottom: none; }
+
+.log-line .t {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  /* 用 ink-muted 而非 ink-faint：faint 在纸底上对比度不足，
+     长列表里时间戳几乎看不见，反而不利于扫读。 */
+  color: var(--ink-muted);
+  /* 时间戳定宽，使所有日志的类型标签竖直对齐 */
+  display: inline-block;
+  min-width: 148px;
+}
+
+/* 日志里的 info 级别：默认用中性灰，但要能看清。
+   warning/error 由模板渲染成带色徽标，这里只兜底 info。 */
+.log-line .log-info,
+.log-line .mono.muted {
+  color: var(--ink-muted);
+  opacity: 1;
+}
+
+/* 日志滚动容器：限制高度，避免辅助信息占满屏幕。
+   200px 约等于 5-6 条日志——待办页的主角是任务表格，
+   日志只需"露出最近几条让人确认系统在动"，不该抢走半屏。 */
+.log-scroll {
+  max-height: 200px;
+  overflow-y: auto;
+  /* 右侧留出滚动条位置，避免内容宽度跳动 */
+  padding-right: 4px;
+}
+.log-scroll::-webkit-scrollbar { width: 8px; }
+.log-scroll::-webkit-scrollbar-thumb { background: var(--rule-strong); }
+.log-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------------------------------------------------------------------------
+   引导折叠面板
+   --------------------------------------------------------------------------- */
+details.guide {
+  background: #fbfaf6;
+  border: 1px solid var(--rule);
+  border-top: 2px solid var(--vermilion);
+  padding: var(--gap-4) var(--gap-5);
+  margin-bottom: var(--gap-5);
+}
+
+details.guide > summary {
+  cursor: pointer;
+  font-family: var(--font-serif);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-2);
+  flex-wrap: wrap;
+}
+
+details.guide > summary::-webkit-details-marker { display: none; }
+
+/* 自绘展开箭头，与整体方角语言一致 */
+details.guide > summary::before {
+  content: "▸";
+  color: var(--vermilion);
+  font-size: 11px;
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+details.guide[open] > summary::before { transform: rotate(90deg); }
+details.guide > summary:hover { color: var(--vermilion); }
+
+ol.guide-steps {
+  margin: var(--gap-3) 0 0;
+  padding-left: 22px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--ink-soft);
+}
+ol.guide-steps li { margin-bottom: var(--gap-2); }
+ol.guide-steps li strong { color: var(--vermilion); font-weight: 600; }
+
+/* ---------------------------------------------------------------------------
+   工具类
+   --------------------------------------------------------------------------- */
+.muted { color: var(--ink-muted); }
+.small { font-size: 12px; }
+.nowrap { white-space: nowrap; }
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  /* 等宽字体略微降低字重，避免在表格中显得过黑 */
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   响应式：窄屏下压缩留白、放宽表格
+   --------------------------------------------------------------------------- */
+@media (max-width: 820px) {
+  main { padding: var(--gap-4) var(--gap-3) var(--gap-6); }
+  section.panel { padding: var(--gap-4) var(--gap-3); }
+  header.topbar {
+    padding: 0 var(--gap-3);
+    height: auto;
+    flex-wrap: wrap;
+    gap: var(--gap-2) var(--gap-3);
+    padding-top: var(--gap-2);
+    padding-bottom: var(--gap-2);
+  }
+  header.topbar h1 { font-size: 14px; letter-spacing: 0.08em; }
+  header.topbar .meta { display: none; }  /* 窄屏优先保证导航可用 */
+  .kv { grid-template-columns: 96px 1fr; }
+  .kv dt { padding-right: var(--gap-2); }
+  /* 表格在窄屏允许横向滚动，而不是压缩列宽导致内容挤压 */
+  section.panel { overflow-x: auto; }
+}
+
+/* 尊重系统的"减少动效"偏好。这是无障碍要求，不是可选项。 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

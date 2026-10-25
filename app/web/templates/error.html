@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{# 错误页：资源不存在等需要整页提示的场景。
+
+   设计说明：
+   - 用一个大的朱砂方章作为视觉锚点，比单纯的文字更有"文书归档/退回"的意味；
+   - 明确给出返回入口，不让用户停在这个页面。 #}
+
+{% block title %}{{ title }} · 合同审批审查系统{% endblock %}
+
+{% block content %}
+<section class="panel" style="text-align:center;padding:var(--gap-7) var(--gap-5)">
+  <div style="
+    width:56px;height:56px;margin:0 auto var(--gap-4);
+    display:flex;align-items:center;justify-content:center;
+    background:var(--vermilion-wash);color:var(--vermilion);
+    border:2px solid var(--vermilion);
+    font-family:var(--font-serif);font-size:24px;font-weight:600;
+  ">退</div>
+
+  <h2 style="justify-content:center;border-bottom:none;padding-bottom:0;font-size:17px">
+    {{ title }}
+  </h2>
+
+  <p class="muted" style="margin:var(--gap-2) 0 var(--gap-5)">{{ message }}</p>
+
+  <a class="btn" href="/">返回待办列表</a>
+</section>
+{% endblock %}

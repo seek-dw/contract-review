@@ -1,0 +1,389 @@
+{% extends "base.html" %}
+{# 审批详情页：一个页面承载需求 2.4.7 的四个模块。
+
+   设计说明：
+   - 五个区块按审查流程编号（壹→伍），配合顶部阅读顺序提示，
+     让第一次进来的人知道"从上往下就是流程"；
+   - 区块标题统一使用「序号 + 名称 + 说明」结构，
+     说明文字量化到"几人、几条、几步"，避免空泛；
+   - 解析结果区把「基础信息 / 条款」拆成两张表，
+     条款表用状态标签 + 原文片段，便于法务逐条核对。 #}
+
+{% block title %}{{ approval_code }} · 合同审批审查系统{% endblock %}
+
+{% block content %}
+{% set task = snapshot.task %}
+
+{# 页首文书头：把审批编号做成"文书编号"的样子，
+   让人一眼确认自己在看哪份合同，同时建立正式感。 #}
+<div class="doc-head">
+  <div class="doc-head-label">合同审查意见书</div>
+  <div class="doc-head-code">{{ approval_code }}</div>
+</div>
+
+{# 状态引导：根据当前状态给出"下一步该做什么"。
+   比静态说明有用——用户不需要记住状态机，页面直接告诉他点哪里。 #}
+<div class="notice info">
+  <strong>本页从上往下读，正好是一次完整审查的顺序</strong>　
+  {% if task.task_status == 'blocked' %}
+    当前已阻塞，请先看「壹」中的阻塞原因，补好文件后点「重试阻塞任务」。
+  {% elif task.task_status == 'done' %}
+    该任务已完成并回写成功。如需重审（合同换版），在「壹」中点「重新审查」。
+  {% else %}
+    下一步：在「壹」中点「一键处理」开始。
+  {% endif %}
+</div>
+
+<section class="panel">
+  <h2>
+    壹 · 审批与附件
+    <span class="hint">这是哪份合同、挂了几个文件、文件下载成功没有</span>
+  </h2>
+
+  <dl class="kv">
+    <dt>审批编号</dt><dd class="mono">{{ task.approval_code }}</dd>
+    <dt>合同标题</dt><dd>{{ task.approval_title }}</dd>
+    <dt>申请人</dt><dd>{{ task.applicant_name }}</dd>
+    <dt>申请时间</dt><dd>{{ task.applied_at or '—' }}</dd>
+    <dt>审批系统状态</dt><dd>{{ detail.approval_status or '—' }}</dd>
+    <dt>任务状态</dt>
+    <dd><span class="badge state-{{ task.task_status }}">{{ task.task_status | display_name }}</span></dd>
+    <dt>回写状态</dt>
+    <dd>
+      <span class="badge {{ 'ok' if task.write_status == 'success' else ('fail' if task.write_status == 'failed' else 'state-pending') }}">
+        {{ task.write_status | display_name }}
+      </span>
+    </dd>
+    {% if task.blocked_reason %}
+    <dt>阻塞原因</dt>
+    <dd>
+      <span class="mono">{{ task.blocked_reason }}</span>
+      {% if task.blocked_detail %}
+      <pre class="snippet">{{ task.blocked_detail }}</pre>
+      {% endif %}
+      <div class="small muted" style="margin-top:4px">
+        重试目标：{{ task.retry_target or '—' }}　补好文件后点下方「重试阻塞任务」可复位状态。
+      </div>
+    </dd>
+    {% endif %}
+  </dl>
+
+  {% if detail.form_data %}
+  <h2 class="sub">
+    表单数据 <span class="hint">审批系统里填写的内容，用于交叉核对合同正文</span>
+  </h2>
+  <table>
+    <thead><tr><th style="width:180px">字段</th><th>值</th></tr></thead>
+    <tbody>
+      {% for key, value in detail.form_data.items() %}
+      <tr><td>{{ key }}</td><td class="mono">{{ value }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <h2 class="sub">
+    附件信息 <span class="hint">SHA256 用于确认本地副本与审批系统一致</span>
+  </h2>
+  {% if snapshot.attachments %}
+  <table>
+    <thead>
+      <tr>
+        <th class="nowrap">ID</th>
+        <th>文件名</th>
+        <th class="nowrap">类型</th>
+        <th class="nowrap">大小</th>
+        <th>下载状态</th>
+        <th>SHA256</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for att in snapshot.attachments %}
+      <tr>
+        <td class="mono">{{ att.document_id }}</td>
+        <td>{{ att.file_name }}</td>
+        <td>{{ att.file_type or '—' }}</td>
+        <td class="nowrap mono">{{ att.file_size }} B</td>
+        <td>
+          <span class="badge {{ 'ok' if att.download_status == 'success' else ('fail' if att.download_status == 'failed' else 'state-pending') }}">
+            {{ att.download_status | display_name }}
+          </span>
+          {% if att.download_error %}
+          <pre class="snippet">{{ att.download_error }}</pre>
+          {% endif %}
+        </td>
+        <td class="mono small">{{ (att.checksum or '—')[:20] }}{% if att.checksum %}…{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted" style="margin:0">无附件记录。</p>
+  {% endif %}
+
+  <div style="margin-top:var(--gap-5)">
+    {% if task.task_status == 'done' %}
+    {# 已完成任务默认禁止重跑：避免白花 OCR 时间，也避免状态回退让人误解。
+       这里用 confirm 二次确认，让"重跑"成为明确意图而非误触。 #}
+    <form class="inline" method="post" action="/actions/run"
+          onsubmit="return confirm('该任务已完成并回写成功。重新审查会生成新结果并再次回写，确定继续？');">
+      <input type="hidden" name="approval_code" value="{{ approval_code }}">
+      <input type="hidden" name="allow_reprocess" value="1">
+      <button type="submit" class="secondary">重新审查</button>
+    </form>
+    <span class="small muted" style="margin-left:10px">
+      已完成任务默认不再处理；合同换版需重审时点此按钮。
+    </span>
+    {% else %}
+    <form class="inline" method="post" action="/actions/run">
+      <input type="hidden" name="approval_code" value="{{ approval_code }}">
+      <button type="submit">
+        {{ '重新处理' if task.task_status == 'blocked' else '一键处理 · 下载→解析→审查→保存→回写' }}
+      </button>
+    </form>
+    {% endif %}
+    {% if task.task_status == 'blocked' %}
+    <form class="inline" method="post" action="/actions/retry" style="margin-left:8px">
+      <input type="hidden" name="approval_code" value="{{ approval_code }}">
+      <button type="submit" class="secondary">
+        重试阻塞任务（复位到 {{ task.retry_target or 'parsing' }}）
+      </button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>
+    贰 · 解析结果
+    <span class="hint">系统从合同里读出了什么。每项都带原文片段，供逐条核对</span>
+  </h2>
+  {% if parse_meta %}
+  {% set parse_status = snapshot.parse.parse_status if snapshot.parse else '' %}
+  <dl class="kv" style="margin-bottom:var(--gap-4)">
+    <dt>解析状态</dt>
+    <dd>
+      <span class="badge {{ 'ok' if parse_status == 'success' else ('fail' if parse_status == 'failed' else 'state-reviewing') }}">
+        {{ parse_status | display_name }}
+      </span>
+    </dd>
+    <dt>页数</dt><dd>{{ parse_meta.get('page_count', '—') }}</dd>
+    <dt>走 OCR 的页</dt>
+    <dd>
+      {{ parse_meta.get('ocr_pages', []) }}
+      {% if parse_meta.get('ocr_pages') %}
+      <span class="small muted">（扫描页，识别结果可能有误差，请对照原文）</span>
+      {% endif %}
+    </dd>
+    <dt>文本层页</dt><dd>{{ parse_meta.get('text_pages', []) }}</dd>
+    <dt>有效字符</dt><dd>{{ parse_meta.get('char_count', '—') }}</dd>
+    <dt>解析耗时</dt><dd>{{ parse_meta.get('elapsed_seconds', '—') }} 秒</dd>
+  </dl>
+  {% if snapshot.parse and snapshot.parse.parse_error %}
+  <div class="notice err">解析失败原因：{{ snapshot.parse.parse_error }}</div>
+  {% endif %}
+  {% else %}
+  <p class="muted" style="margin:0">尚未解析。点击「壹」中的「一键处理」开始。</p>
+  {% endif %}
+
+  {% if basic_rows %}
+  <h2 class="sub">
+    基础信息 <span class="hint">8 项</span>
+  </h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:140px">字段</th>
+        <th style="width:220px">值</th>
+        <th class="nowrap" style="width:84px">状态</th>
+        <th class="nowrap" style="width:110px">位置</th>
+        <th>原文片段 / 说明</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in basic_rows %}
+      <tr>
+        <td>{{ row.label }}</td>
+        <td>{{ row.value if row.value else '—' }}</td>
+        <td>
+          <span class="badge {{ 'ok' if row.status == 'success' else ('fail' if row.status == 'failed' else 'state-pending') }}">
+            {{ row.status | display_name }}
+          </span>
+        </td>
+        <td class="nowrap small mono">{{ row.location or '—' }}</td>
+        <td>
+          {% if row.snippet %}<pre class="snippet">{{ row.snippet }}</pre>{% endif %}
+          {% if row.detail %}<span class="small muted">{{ row.detail }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if clause_rows %}
+  <h2 class="sub">
+    条款信息 <span class="hint">8 类 ·「未找到」只代表系统没检出，请人工确认合同是否确实缺失</span>
+  </h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:140px">条款</th>
+        <th class="nowrap" style="width:84px">状态</th>
+        <th class="nowrap" style="width:110px">位置</th>
+        <th>条款原文 / 未检出说明</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in clause_rows %}
+      <tr>
+        <td>{{ row.label }}</td>
+        <td>
+          <span class="badge {{ 'ok' if row.status == 'success' else ('fail' if row.status == 'failed' else 'state-pending') }}">
+            {{ row.status | display_name }}
+          </span>
+        </td>
+        <td class="nowrap small mono">{{ row.location or '—' }}</td>
+        <td>
+          {% if row.value %}<pre class="snippet">{{ row.value }}</pre>{% endif %}
+          {% if row.detail %}<span class="small muted">{{ row.detail }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>
+    叁 · 规则命中
+    <span class="hint">系统挑出的风险点。每条都附原文证据或计算依据，可回原文核对</span>
+  </h2>
+  {% if snapshot.hits %}
+  <table>
+    <thead>
+      <tr>
+        <th class="nowrap" style="width:64px">风险</th>
+        <th style="width:190px">规则名称</th>
+        <th class="nowrap" style="width:110px">证据位置</th>
+        <th>命中证据</th>
+        <th style="width:220px">处理建议</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for hit in snapshot.hits %}
+      <tr>
+        <td>
+          <span class="badge risk-{{ hit.risk_level }}">{{ hit.risk_level | display_name }}</span>
+        </td>
+        <td>
+          {{ hit.rule_name }}
+          <div class="mono small muted" style="margin-top:2px">{{ hit.rule_code }}</div>
+        </td>
+        <td class="nowrap small mono">{{ hit.evidence_position }}</td>
+        <td><pre class="snippet">{{ hit.evidence_text }}</pre></td>
+        <td class="small">{{ hit.suggestion_text }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted" style="margin:0">
+    尚无命中记录。若尚未审查，请点击「壹」中的「一键处理」。
+  </p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>
+    肆 · 结果与回写
+    <span class="hint">最终意见长什么样、有没有写进审批系统</span>
+  </h2>
+  {% if snapshot.result %}
+  {% set result = snapshot.result %}
+  <dl class="kv">
+    <dt>结果编号</dt><dd class="mono">{{ result.review_id }}</dd>
+    <dt>总风险等级</dt>
+    <dd><span class="badge risk-{{ result.overall_risk_level }}">{{ result.overall_risk_level | display_name }}</span></dd>
+    <dt>生成时间</dt><dd>{{ result.created_at }}</dd>
+  </dl>
+
+  <h2 class="sub">中文摘要</h2>
+  <p style="margin:0">{{ result.summary_text }}</p>
+
+  <h2 class="sub">
+    审批关注点 <span class="hint">{{ result.focus_points|length }} 项 · 需人工确认的事项</span>
+  </h2>
+  <ol style="margin:0;padding-left:22px">
+    {% for point in result.focus_points %}<li style="margin-bottom:4px">{{ point }}</li>{% endfor %}
+  </ol>
+
+  <h2 class="sub">
+    回写内容 <span class="hint">实际写入审批评论区的完整文本</span>
+  </h2>
+  <pre class="comment">{{ result.comment_text }}</pre>
+
+  <div style="margin-top:var(--gap-4)">
+    <form class="inline" method="post" action="/actions/write-comment">
+      <input type="hidden" name="approval_code" value="{{ approval_code }}">
+      <input type="hidden" name="review_id" value="{{ result.review_id }}">
+      <button type="submit" {{ 'disabled' if task.write_status == 'success' }}>
+        {{ '已回写成功 · 重复点击不会重复写入' if task.write_status == 'success' else '回写审批评论' }}
+      </button>
+    </form>
+  </div>
+  {% else %}
+  <p class="muted" style="margin:0">尚无审查结果。请点击「壹」中的「一键处理」生成。</p>
+  {% endif %}
+
+  {% if snapshot.comment_logs %}
+  <h2 class="sub">
+    回写尝试记录 <span class="hint">{{ snapshot.comment_logs|length }} 条 · 成功与失败都留痕</span>
+  </h2>
+  <table>
+    <thead>
+      <tr>
+        <th class="nowrap" style="width:150px">时间</th>
+        <th class="nowrap" style="width:90px">状态</th>
+        <th class="nowrap" style="width:90px">结果编号</th>
+        <th>外部系统响应</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for log in snapshot.comment_logs %}
+      <tr>
+        <td class="small mono nowrap">{{ log.created_at }}</td>
+        <td>
+          <span class="badge {{ 'ok' if log.write_status == 'success' else 'fail' }}">
+            {{ log.write_status | display_name }}
+          </span>
+        </td>
+        <td class="mono">{{ log.review_result_id or '—' }}</td>
+        <td class="small">{{ log.write_response_text }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>
+    伍 · 全链路日志
+    <span class="hint">{{ snapshot.logs|length }} 条 · 按时间正序，哪一步停了问题就在那一步</span>
+  </h2>
+  {% if snapshot.logs %}
+    {% for log in snapshot.logs %}
+    <div class="log-line">
+      <span class="t">{{ log.created_at }}</span>
+      <span class="mono">[{{ log.log_type }}]</span>
+      <span class="mono">[{{ log.log_level }}]</span>
+      {{ log.log_content }}
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted" style="margin:0">暂无日志。</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,67 @@
+{# 基础布局模板：所有页面继承本模板，统一顶栏、样式与通知区。
+
+   设计说明（「法律文书 / 编辑排版」方向）：
+   - 顶栏做成深墨色文书表头，底部一道朱砂细线作为装订线；
+   - 左侧加一枚方形朱砂印记作为品牌标识，替代常见的图标/Logo 图片；
+   - 通知区用左侧粗边旁注样式，模拟纸质批注；
+   - 全站不引入网络字体与图标库，离线可用、首屏无闪烁。 #}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}合同审批审查系统{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  {# 品牌印记：朱砂方章。用文字「审」而非图片，零请求且清晰。 #}
+  <span class="brand-seal" aria-hidden="true">审</span>
+  <h1>合同审批审查系统</h1>
+  <nav>
+    <a href="/">待办列表</a>
+    <a href="/rules">审查规则</a>
+    <a href="/logs">运行日志</a>
+  </nav>
+  <span class="meta">
+    {{ settings.approval_mode }} · 规则引擎为确定性匹配 · 不替代人工审批
+  </span>
+</header>
+
+<main>
+  {# 通知区：从查询串读取操作结果。用查询串而非 flash session，
+     是因为本系统无登录态与 session 存储，查询串足够且无状态。 #}
+  {% if request.query_params.get('error') %}
+    <div class="notice err">操作失败：{{ request.query_params.get('error') }}</div>
+  {% endif %}
+  {% if request.query_params.get('ok') %}
+    <div class="notice ok">
+      处理完成。{% if request.query_params.get('review_id') %}
+      review_id={{ request.query_params.get('review_id') }}{% endif %}
+      {% if request.query_params.get('write_status') %}
+      　回写状态：{{ request.query_params.get('write_status') }}{% endif %}
+    </div>
+  {% endif %}
+  {% if request.query_params.get('write_status') and not request.query_params.get('ok') %}
+    <div class="notice ok">
+      回写状态：{{ request.query_params.get('write_status') }}
+      {% if request.query_params.get('already') == '1' %}
+      　（该结果此前已回写成功，本次为幂等短路，未重复写入）
+      {% endif %}
+    </div>
+  {% endif %}
+  {% if request.query_params.get('retried') %}
+    <div class="notice info">已执行重试，任务状态已复位，可再次点击「一键处理」。</div>
+  {% endif %}
+  {% if request.query_params.get('pulled') %}
+    <div class="notice ok">
+      拉取完成：本次共 {{ request.query_params.get('total') }} 条，
+      新建 {{ request.query_params.get('created') }} 条，
+      更新 {{ request.query_params.get('updated') }} 条。
+    </div>
+  {% endif %}
+
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

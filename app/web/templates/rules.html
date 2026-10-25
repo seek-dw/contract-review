@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{# 审查规则页：只读展示 26 条种子规则。
+
+   设计说明：
+   - 顶部先解释三种匹配模式（阈值/关键词/缺失），
+     否则使用者看到 match_mode 列会不知道在说什么；
+   - 按风险等级分组展示，而不是平铺：审批人更关心"哪些是高风险规则"；
+   - 规则编码用等宽字体，便于复制给技术人员调整配置。 #}
+
+{% block title %}审查规则 · 合同审批审查系统{% endblock %}
+
+{% block content %}
+
+<section class="panel">
+  <h2>
+    匹配模式说明
+    <span class="hint">理解这三种模式，就理解了系统怎么判断风险</span>
+  </h2>
+  <table>
+    <thead>
+      <tr>
+        <th class="nowrap" style="width:100px">模式</th>
+        <th style="width:200px">判断方式</th>
+        <th>例子</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge state-reviewing">阈值比较</span></td>
+        <td>从原文抽出数字，与阈值比较</td>
+        <td class="small">
+          预付款条款中检出「60%」，阈值是「&gt; 30%」→ 命中「预付款比例过高」。
+          <span class="muted">数值由确定性代码计算，不做语义猜测。</span>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="badge state-pending">关键词匹配</span></td>
+        <td>在指定范围内出现某些词</td>
+        <td class="small">
+          争议解决条款中出现「由乙方所在地」→ 命中「管辖地约定在对方所在地」。
+          <span class="muted">支持限定只在某一条款内检索，避免串味。</span>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="badge state-blocked">缺失检测</span></td>
+        <td>该有的字段或条款没有检出</td>
+        <td class="small">
+          全文找不到保密条款 → 命中「保密条款缺失」。
+          <span class="muted">「未检出」不等于「合同没写」，仍需人工确认。</span>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>
+    全部规则
+    <span class="hint">{{ rules|length }} 条 · 按优先级升序 · 需调整请带规则编码联系技术人员</span>
+  </h2>
+  <table>
+    <thead>
+      <tr>
+        <th class="nowrap" style="width:62px">优先级</th>
+        <th style="width:170px">规则名称</th>
+        <th class="nowrap" style="width:66px">风险</th>
+        <th class="nowrap" style="width:112px">模式</th>
+        <th style="width:170px">匹配条件</th>
+        <th>处理建议</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for rule in rules %}
+      <tr>
+        <td class="mono">{{ rule.priority }}</td>
+        <td>
+          {{ rule.rule_name }}
+          <div class="mono small muted" style="margin-top:2px">{{ rule.rule_code }}</div>
+        </td>
+        <td>
+          <span class="badge risk-{{ rule.risk_level }}">{{ rule.risk_level | display_name }}</span>
+        </td>
+        <td class="small nowrap">{{ rule.match_mode | display_name }}</td>
+        <td class="small">
+          <span class="mono">{{ rule.match_text }}</span>
+          {% if rule.condition_json and rule.condition_json != '{}' %}
+          <pre class="snippet">{{ rule.condition_json }}</pre>
+          {% endif %}
+        </td>
+        <td class="small">{{ rule.suggestion_text }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
